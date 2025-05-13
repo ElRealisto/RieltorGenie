@@ -1,0 +1,19 @@
+# Бінарні файли
+*.exe
+*.out
+*.app
+
+# Кеші та тимчасові файли
+*.log
+*.tmp
+
+# Конфіденційні дані
+users.json
+.env
+
+# IDE (VSCode, GoLand)
+.vscode/
+.idea/
+
+# OS
+.DS_Store
