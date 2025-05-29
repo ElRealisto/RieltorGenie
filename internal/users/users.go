@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -91,9 +92,11 @@ func GetAll() []User {
 func FindByTelegramID(id int64) *User {
 	for i := range users {
 		if users[i].TelegramID == id {
+			fmt.Printf("🔍 Знайдено користувача: %+v\n", users[i])
 			return &users[i]
 		}
 	}
+	fmt.Println("❌ Користувача не знайдено.")
 	return nil
 }
 
@@ -107,7 +110,16 @@ func InitDefaultUsers() {
 	}
 
 	// ВАЖЛИВО: Завжди завантажувати користувачів і парсити імена, навіть якщо файл щойно створено
-	_ = LoadUsers()
+	err := LoadUsers()
+	if err != nil {
+		log.Printf("Помилка завантаження користувачів: %v", err)
+	}
+
+	// Додаткове логування для перевірки завантаження користувачів
+	fmt.Println("🔍 Завантажені користувачі:")
+	for _, user := range users {
+		fmt.Printf("👤 %+v\n", user)
+	}
 }
 
 func ParseNameFromProfile(url string) (string, error) {

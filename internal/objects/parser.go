@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +24,8 @@ type Property struct {
 	Rooms        string `json:"rooms"`
 	Area         string `json:"area"`
 	FloorDetails string `json:"floorDetails"`
+	Location     string `json:"location"` // Додано поле Location
+	Region       string `json:"region"`   // Додано поле Region
 }
 
 type House struct {
@@ -32,6 +36,8 @@ type House struct {
 	Area         string `json:"area"`
 	FloorDetails string `json:"floorDetails"`
 	LandPlot     string `json:"landPlot,omitempty"`
+	Location     string `json:"location"` // Додано поле Location
+	Region       string `json:"region"`   // Додано поле Region
 }
 
 // cleanTitle очищає заголовок від зайвих символів
@@ -52,7 +58,7 @@ func findCategoryFromSlug(slug string) *PropertyCategory {
 }
 
 // createProperty створює Property зі спанів
-func createProperty(title, price, link, category string, spans *goquery.Selection) Property {
+func createProperty(title, price, link, category, region, location string, spans *goquery.Selection) Property {
 	return Property{
 		Title:        title,
 		Price:        price,
@@ -61,11 +67,13 @@ func createProperty(title, price, link, category string, spans *goquery.Selectio
 		Rooms:        strings.TrimSpace(spans.Eq(0).Text()),
 		Area:         strings.TrimSpace(spans.Eq(1).Text()),
 		FloorDetails: strings.TrimSpace(spans.Eq(2).Text()),
+		Location:     location, // Додано поле Location
+		Region:       region,   // Додано поле Region
 	}
 }
 
 // createHouse створює House зі спанів
-func createHouse(title, price, link, category string, spans *goquery.Selection) House {
+func createHouse(title, price, link, category, region, location string, spans *goquery.Selection) House {
 	return House{
 		Title:        title,
 		Price:        price,
@@ -74,6 +82,8 @@ func createHouse(title, price, link, category string, spans *goquery.Selection) 
 		Area:         strings.TrimSpace(spans.Eq(0).Text()),
 		FloorDetails: strings.TrimSpace(spans.Eq(1).Text()),
 		LandPlot:     strings.TrimSpace(spans.Eq(2).Text()),
+		Location:     location, // Додано поле Location
+		Region:       region,   // Додано поле Region
 	}
 }
 
@@ -139,7 +149,7 @@ func ParseRealtorProfile(profileURL string) ([]any, error) {
 		}
 
 		price := strings.TrimSpace(s.Find(".catalog-card-price-title").Text())
-		title := cleanTitle(s.Find("h2").Text())
+		title := cleanTitle(s.Find(".catalog-card-address").Text())
 		link, _ := s.Find("a.catalog-card-media").Attr("href")
 		if strings.HasPrefix(link, "/") {
 			link = baseURL + link
@@ -156,14 +166,18 @@ func ParseRealtorProfile(profileURL string) ([]any, error) {
 			localIndex -= cat.Count
 		}
 
+		// Отримання регіону та місця розташування
+		region := strings.TrimSpace(s.Find(".catalog-card-region a:first-child").Text())
+		location := strings.TrimSpace(s.Find(".catalog-card-region a:last-child").Text())
+
 		// Аналіз даних об'єкта
 		spans := s.Find("div.catalog-card-details-row span")
 
 		if strings.Contains(objCategory, "houses") && spans.Length() >= 3 {
-			house := createHouse(title, price, link, objCategory, spans)
+			house := createHouse(title, price, link, objCategory, region, location, spans)
 			results = append(results, house)
 		} else if spans.Length() >= 3 {
-			prop := createProperty(title, price, link, objCategory, spans)
+			prop := createProperty(title, price, link, objCategory, region, location, spans)
 			results = append(results, prop)
 		}
 
@@ -190,4 +204,80 @@ func SavePropertiesToFile(data []any, filename string) error {
 	}
 
 	return nil
+}
+
+func SaveObjectsByCategory(data []any, baseDir string) error {
+	// Групуємо по категоріях
+	grouped := map[string][]any{}
+
+	for _, v := range data {
+		var slug string
+		switch obj := v.(type) {
+		case Property:
+			slug = obj.Category
+		case House:
+			slug = obj.Category
+		default:
+			continue
+		}
+		grouped[slug] = append(grouped[slug], v)
+	}
+
+	// Зберігаємо кожну групу
+	for slug, items := range grouped {
+		pc := findCategoryFromSlug(slug)
+		if pc == nil {
+			fmt.Printf("⚠️ Невідома категорія: %s\n", slug)
+			continue
+		}
+
+		dir := filepath.Join(baseDir, string(pc.Category))
+		if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+			return fmt.Errorf("не вдалося створити директорію %s: %w", dir, err)
+		}
+
+		filename := filepath.Join(dir, string(pc.Type)+".json")
+		file, err := os.Create(filename) // перезаписуємо файл щоразу
+		if err != nil {
+			return fmt.Errorf("не вдалося створити файл %s: %w", filename, err)
+		}
+		defer file.Close()
+
+		encoder := json.NewEncoder(file)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(items); err != nil {
+			return fmt.Errorf("не вдалося записати JSON у файл %s: %w", filename, err)
+		}
+	}
+
+	return nil
+}
+
+var parsedFilePath string
+
+func init() {
+	_, filename, _, _ := runtime.Caller(0)
+	dir := filepath.Dir(filename)
+	parsedFilePath = filepath.Join(dir, "parsed_objects.json")
+}
+
+func LoadParsedObjects() ([]Property, error) {
+	// Перевірка, чи існує файл
+	if _, err := os.Stat(parsedFilePath); os.IsNotExist(err) {
+		fmt.Println("⚠️ Файл parsed_objects.json не існує, спарсимо об'єкти...")
+		return nil, nil
+	}
+
+	file, err := os.Open(parsedFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("не вдалося відкрити parsed_objects.json: %v", err)
+	}
+	defer file.Close()
+
+	var props []Property
+	err = json.NewDecoder(file).Decode(&props)
+	if err != nil {
+		return nil, fmt.Errorf("не вдалося розпарсити обʼєкти: %v", err)
+	}
+	return props, nil
 }
