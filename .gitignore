@@ -2,12 +2,16 @@
 *.exe
 *.out
 *.app
+RieltorGenie
 
 # Кеші та тимчасові файли
 *.log
 *.tmp
+*.stb
+*.old
 
 # Конфіденційні дані
+*.json
 users.json
 .env
 
@@ -17,3 +21,11 @@ users.json
 
 # OS
 .DS_Store
+
+# Дані, які створюються парсером
+data/
+internal/objects/parsed_objects.json
+
+# Node modules
+
+node_modules/
