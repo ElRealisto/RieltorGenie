@@ -2,11 +2,10 @@ package objects
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
-	"net/url"
-	"regexp"
-	"strconv"
+	"os"
 	"strings"
 	"time"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/chromedp/chromedp"
 )
 
-// SearchResult описує результат пошуку
 type SearchResult struct {
 	Title    string `json:"title"`
 	Price    string `json:"price"`
@@ -23,113 +21,220 @@ type SearchResult struct {
 	PostedBy string `json:"posted_by"`
 }
 
-// SearchResults описує список результатів пошуку
 type SearchResults struct {
 	Results []SearchResult `json:"search_results"`
 }
 
-// StartMonitoring запускає нескінченний цикл перевірок позицій об'єктів
-func StartMonitoring(realtors []users.User) {
-	fmt.Println("🚀 Моніторинг позицій об'єктів запущено")
+type SearchURL struct {
+	Title string `json:"title"`
+	URL   string `json:"url"`
+}
+
+// MonitoredObject — легкий аналог Property без циклічного імпорту
+type MonitoredObject struct {
+	Title string `json:"title"`
+	Link  string `json:"link"`
+}
+
+func (m MonitoredObject) URL() string {
+	return m.Link
+}
+
+func StartMonitoring(realtors []users.User, notify func(realtor users.User, message string) error) {
+	log.Println("🚀 Моніторинг позицій об'єктів запущено")
 
 	go func() {
 		for {
+			log.Println("🔁 Нова ітерація моніторингу")
+
 			for _, realtor := range realtors {
 				if realtor.Role != users.RealtorRole {
 					continue
 				}
 
-				// Отримати об'єкти цього ріелтора
-				objects := GetObjectsForRealtor(realtor.ProfileURL)
+				log.Printf("👤 Обробка ріелтора %s (%s)", realtor.Name, realtor.ProfileURL)
 
-				// Перевіряємо всі об'єкти ріелтора
+				objects := GetObjectsForRealtor(realtor.ProfileURL)
+				log.Printf("📂 Отримання об'єктів завершено, знайдено %d об'єктів", len(objects))
+
 				for i, obj := range objects {
-					fmt.Printf("🔍 Перевірка об'єкта %d (%s) ріелтора %s...\n", i+1, obj.Title, realtor.Name)
-					CheckObjectPosition(obj, realtor)
-					time.Sleep(10 * time.Second) // Пауза між перевірками об'єктів
+					log.Printf("🔍 Перевірка об'єкта %d (%s) ріелтора %s", i+1, obj.Title, realtor.Name)
+
+					isFirst, topRealtor := CheckObjectPosition(obj, realtor)
+					log.Println("✅ Перевірка завершена")
+
+					if !isFirst {
+						log.Printf("⚠️ Рієлтор %s НЕ перший для об'єкта: %s", realtor.Name, obj.Title)
+
+						message := fmt.Sprintf(
+							"⚠️ О, світ очей моїх! Ваш об'єкт *%s* рекламує першим якась падла: *%s*\nПосилання: %s",
+							obj.Title, topRealtor, obj.URL(),
+						)
+
+						err := notify(realtor, message)
+						if err != nil {
+							log.Printf("❌ Помилка надсилання повідомлення ріелтору %s: %v", realtor.Name, err)
+						} else {
+							log.Printf("📨 Повідомлення надіслано ріелтору %s", realtor.Name)
+						}
+					} else {
+						log.Printf("✅ Наш ріелтор %s перший для об'єкта %s", realtor.Name, obj.Title)
+					}
+					log.Println("✅ Перевірка об'єкта завершена, чекаємо 15 секунд...")
+					time.Sleep(15 * time.Second)
 				}
 			}
 
-			// Пауза між циклами (наприклад, 3 хвилини)
-			time.Sleep(3 * time.Minute)
+			log.Println("🔁 Ітерація моніторингу завершена. Чекаємо 60 секунд до наступної...")
+			time.Sleep(60 * time.Second)
 		}
 	}()
 }
 
-// GetObjectsForRealtor — завантажує об'єкти з parsed_objects.json
-func GetObjectsForRealtor(profileURL string) []Property {
+func GetObjectsForRealtor(profileURL string) []MonitoredObject {
 	all, err := LoadParsedObjects()
 	if err != nil {
 		log.Printf("❌ Помилка завантаження обʼєктів: %v", err)
 		return nil
 	}
 
-	// Тимчасово повертаємо всі об'єкти без фільтрації
-	return all
-}
-
-// CheckObjectPosition — основна логіка перевірки позиції об'єкта
-func CheckObjectPosition(obj Property, realtor users.User) {
-	ctx, cancel := chromedp.NewContext(context.Background())
-	defer cancel()
-
-	var allRealtors []string
-
-	// Формуємо URL для пошуку на основі даних об'єкта
-	priceMin, priceMax := calculatePriceRange(obj.Price)
-	streetName := url.QueryEscape(obj.Title)
-	searchURL := fmt.Sprintf("https://rieltor.ua/%s/%s-rooms/?currency=2&price_min=%d&price_max=%d&radius=20&sort=-default&street_name=%s#15.59/50.435089/30.511846",
-		obj.Category,
-		strings.TrimSuffix(obj.Rooms, " кімнати"),
-		priceMin,
-		priceMax,
-		streetName)
-
-	fmt.Printf("🔍 Виконання пошуку за URL: %s\n", searchURL)
-
-	// Виконання дій з chromedp
-	var actions []chromedp.Action
-
-	actions = append(actions,
-		chromedp.Navigate(searchURL),
-		chromedp.WaitVisible("div.catalog-items-container", chromedp.ByQuery),
-		chromedp.Evaluate(`Array.from(document.querySelectorAll('div.catalog-items-container button.button-link.catalog-card-author-title')).slice(0, 3).map(el => el.innerText)`, &allRealtors),
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			fmt.Println("🔍 Перелік перших трьох ріелторів на сторінці:")
-			for i, realtor := range allRealtors {
-				fmt.Printf("%d. %s\n", i+1, realtor)
-			}
-			return nil
-		}),
-	)
-
-	err := chromedp.Run(ctx, actions...)
-	if err != nil {
-		log.Printf("❌ Помилка при перевірці позиції об'єкта: %v", err)
-		return
-	}
-
-	fmt.Printf("🧪 Перевірка позиції для об'єкта '%s' (%s) ріелтора %s...\n", obj.Title, obj.Link, realtor.Name)
-
-	if len(allRealtors) > 0 {
-		if !strings.EqualFold(allRealtors[0], realtor.Name) {
-			fmt.Printf("⚠️ Об'єкт '%s' на позиції 1, але його розмістив(ла) інший ріелтор: %s\n",
-				obj.Title, allRealtors[0])
-			// TODO: Надіслати повідомлення через бот
-		} else {
-			fmt.Printf("✅ Об'єкт '%s' знайдено на позиції 1, все гаразд\n", obj.Title)
+	var monitored []MonitoredObject
+	for _, p := range all {
+		switch obj := p.(type) {
+		case Property:
+			monitored = append(monitored, MonitoredObject{
+				Title: obj.Title,
+				Link:  obj.Link,
+			})
+		case House:
+			monitored = append(monitored, MonitoredObject{
+				Title: obj.Title,
+				Link:  obj.Link,
+			})
+		default:
+			log.Printf("⚠️ Невідомий тип об'єкта: %T", p)
 		}
 	}
+
+	return monitored
 }
 
-// calculatePriceRange обчислює мінімальну і максимальну ціну з урахуванням 15% знижки
-func calculatePriceRange(priceStr string) (int, int) {
-	re := regexp.MustCompile(`\d+`)
-	priceStr = strings.Join(re.FindAllString(priceStr, -1), "")
-	priceValue, err := strconv.Atoi(priceStr)
+func CheckObjectPosition(obj MonitoredObject, realtor users.User) (bool, string) {
+	urlMap, err := loadSearchURLs()
 	if err != nil {
-		return 0, 0
+		log.Printf("❌ Помилка завантаження search_URLs.json: %v", err)
+		return false, ""
 	}
-	minPrice := int(float64(priceValue) * 0.85)
-	return minPrice, priceValue
+
+	searchURL, ok := urlMap[obj.Title]
+	if !ok {
+		log.Printf("⚠️ Немає пошукового URL для обʼєкта: %s", obj.Title)
+		return false, ""
+	}
+
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.Flag("headless", true),
+		chromedp.Flag("disable-gpu", true),
+		chromedp.Flag("no-sandbox", true),
+		chromedp.Flag("disable-dev-shm-usage", true),
+	)
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer cancelAlloc()
+
+	ctxBase, cancelBase := chromedp.NewContext(allocCtx)
+	defer cancelBase()
+
+	ctx, cancel := context.WithTimeout(ctxBase, 15*time.Second)
+	defer cancel()
+
+	log.Printf("🕵️‍♀️ Перехід за URL: %s", searchURL)
+
+	var countText string
+	err = chromedp.Run(ctx,
+		chromedp.Navigate(searchURL),
+		chromedp.Sleep(2*time.Second),
+		chromedp.Evaluate(`document.querySelector('span[data-listing-count]')?.textContent`, &countText),
+	)
+	if err != nil {
+		log.Printf("❌ Помилка під час завантаження сторінки: %v", err)
+		return false, ""
+	}
+
+	log.Printf("📊 Всього оголошень: '%s'", countText)
+
+	if countText == "" {
+		var html string
+		_ = chromedp.Run(ctx, chromedp.OuterHTML("html", &html))
+		fmt.Println("⚠️ DOM HTML (обрізаний):\n", html[:1000])
+		log.Println("❌ Не знайдено елемент 'span[data-listing-count]'")
+		return false, ""
+	}
+
+	count := extractNumber(countText)
+	if count == 0 {
+		fmt.Printf("❌ Обʼєкт '%s' не знайдено серед результатів\n", obj.Title)
+		return false, ""
+	}
+
+	var titles, authors []string
+
+	titlesJS := fmt.Sprintf(`Array.from(document.querySelectorAll('.catalog-card-address')).slice(0, %d).map(e => e.textContent.trim())`, count)
+	authorsJS := fmt.Sprintf(`Array.from(document.querySelectorAll('button.catalog-card-author-title')).slice(0, %d).map(e => e.textContent.trim())`, count)
+
+	err = chromedp.Run(ctx,
+		chromedp.Evaluate(titlesJS, &titles),
+		chromedp.Evaluate(authorsJS, &authors),
+	)
+	if err != nil {
+		log.Printf("❌ Помилка під час обробки результатів: %v", err)
+		return false, ""
+	}
+
+	if len(titles) == 0 || len(authors) == 0 {
+		fmt.Printf("❌ Обʼєкт '%s' не знайдено серед результатів\n", obj.Title)
+		return false, ""
+	}
+
+	if !strings.EqualFold(titles[0], obj.Title) {
+		fmt.Printf("⚠️ Обʼєкт '%s' знайдено не першим: перший у списку — '%s'\n", obj.Title, titles[0])
+		return false, authors[0]
+	}
+
+	if !strings.EqualFold(authors[0], realtor.Name) {
+		fmt.Printf("⚠️ Обʼєкт '%s' знайдено, але першим його розміщує інший ріелтор: %s\n", obj.Title, authors[0])
+		return false, authors[0]
+	}
+
+	fmt.Printf("✅ Обʼєкт '%s' знайдено, першим розміщує наш ріелтор: %s\n", obj.Title, authors[0])
+	return true, authors[0]
+}
+
+func extractNumber(text string) int {
+	num := 0
+	for _, r := range text {
+		if r >= '0' && r <= '9' {
+			num = num*10 + int(r-'0')
+		}
+	}
+	return num
+}
+
+func loadSearchURLs() (map[string]string, error) {
+	data, err := os.ReadFile("internal/objects/search_URLs.json")
+	if err != nil {
+		return nil, err
+	}
+
+	var urlList []SearchURL
+	err = json.Unmarshal(data, &urlList)
+	if err != nil {
+		return nil, err
+	}
+
+	urlMap := make(map[string]string)
+	for _, item := range urlList {
+		urlMap[item.Title] = item.URL
+	}
+
+	return urlMap, nil
 }

@@ -83,3 +83,10 @@ func (b *Bot) sendWithInlineButtons(chatID int64, message string) {
 		log.Printf("Помилка надсилання повідомлення: %v", err)
 	}
 }
+
+func (b *Bot) SendMarkdownMessage(chatID int64, text string) error {
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = "Markdown"
+	_, err := b.api.Send(msg)
+	return err
+}

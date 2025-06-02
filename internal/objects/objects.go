@@ -1,6 +1,8 @@
 package objects
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // Category тип: продаж чи оренда
 type Category string
@@ -46,3 +48,50 @@ var PropertyCategories = []PropertyCategory{
 func GenerateURL(domain string, pc PropertyCategory) string {
 	return fmt.Sprintf("https://%s/%s/", domain, pc.RelativePath)
 }
+
+// StartAutoParsingWithMonitoring запускає автопарсинг і моніторинг у циклі
+// func StartAutoParsingWithMonitoring(profileURL, parsedObjectsPath string, onUpdate func() error) {
+// 	for {
+// 		log.Println("🔁 Починаємо автопарсинг профілю:", profileURL)
+
+// 		// 1. Парсинг профілю
+// 		parsed, err := ParseRealtorProfile(profileURL)
+// 		if err != nil {
+// 			log.Printf("❌ Помилка автопарсингу: %v", err)
+// 			time.Sleep(10 * time.Minute)
+// 			continue
+// 		}
+
+// 		// 2. Приведення типів: []any → []Property
+// 		var properties []Property
+// 		for _, item := range parsed {
+// 			prop, ok := item.(Property)
+// 			if !ok {
+// 				log.Println("⚠️ Неправильний тип при приведенні до Property")
+// 				continue
+// 			}
+// 			properties = append(properties, prop)
+// 		}
+
+// 		// 3. Збереження оновлених об'єктів у файл
+// 		anyProps := make([]any, len(properties))
+// 		for i, p := range properties {
+// 			anyProps[i] = p
+// 		}
+
+// 		err = SavePropertiesToFile(anyProps, parsedObjectsPath)
+// 		if err != nil {
+// 			log.Printf("❌ Помилка збереження об'єктів: %v", err)
+// 		} else {
+// 			log.Printf("✅ Збережено %d об'єктів у %s", len(properties), parsedObjectsPath)
+// 		}
+
+// 		// 4. Оновити search_URLs.json через передану функцію
+// 		if err := onUpdate(); err != nil {
+// 			log.Printf("❌ Помилка оновлення через onUpdate: %v", err)
+// 		}
+
+// 		// 5. Затримка до наступного запуску
+// 		time.Sleep(30 * time.Minute) // або інтервал, який хочеш
+// 	}
+// }

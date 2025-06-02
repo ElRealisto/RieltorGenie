@@ -9,6 +9,8 @@ RieltorGenie
 *.tmp
 *.stb
 *.old
+*.god
+*.gol
 
 # Конфіденційні дані
 *.json

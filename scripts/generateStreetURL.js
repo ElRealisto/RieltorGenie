@@ -44,7 +44,7 @@ const { chromium } = require('playwright');
       
 
 
-  const browser = await chromium.launch({ headless: false });
+  const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
 
   for (const obj of objects) {
@@ -71,7 +71,7 @@ const { chromium } = require('playwright');
 
     const baseURL = link.substring(0, categoryIndex + category.length + 2);
     console.log(`🌐 Перехід за URL: ${baseURL}`);
-    await page.goto(baseURL, { timeout: 60000 });
+    await page.goto(baseURL, { timeout: 4000 });
 
     const inputSelector = 'input.nav_street_input';
     const inputLocator = page.locator(inputSelector);
